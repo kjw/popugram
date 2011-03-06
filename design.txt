@@ -1,0 +1,51 @@
+On all pages:
+
+Title
+
+Tagline
+
+Content
+
+Footer with link to my e-mail address
+
+Content for hello:
+
+Create new popugram
+
+Recent popugrams
+
+Content for create new:
+
+Form
+
+Content for view:
+
+Popugram name
+
+Rankings
+
+Note aobut unranked
+
+
+
+.title
+
+.subtitle
+
+.tagline
+
+#footer
+
+#header
+
+#content
+
+.note
+
+.ranked
+
+.unranked
+
+.position
+
+.label

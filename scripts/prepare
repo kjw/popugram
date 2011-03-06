@@ -1,0 +1,9 @@
+#!/bin/bash -l
+
+aptitude update -y
+aptitude upgrade -y
+aptitude install -y emacs openjdk-6-jdk git-core wget
+
+wget https://github.com/technomancy/leiningen/raw/stable/bin/lein
+chmod +x lein
+
