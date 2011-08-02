@@ -6,8 +6,8 @@
 ; (defrecord keyword :last-updated :hits :cached-rating)
 
 (defonce dt-format (SimpleDateFormat. "EEE, dd MMM yyyy HH:mm:ss Z"))
-(defonce high-thres (* 1000 60 60 12))
-(defonce low-thres (* 1000 60 60 24))
+(defonce high-thres (* 1000 60 60))
+(defonce low-thres (* 1000 60 60 4))
 
 (defonce *keywords* (agent {}))
 
@@ -32,25 +32,44 @@
 		  :otherwise                    0)]
     (reduce + (map rate-fn hit-set))))
 
-(defn- query-recent-hits
-  "Query twitter for hits since the last update"
-  [query-param]
-  (let [results (:results
-		 (read-json
-		  (reader
-		   (str "http://search.twitter.com/search.json?q="
-			query-param
-			"&rpp=100"))))]
-    (set (map #(.getTime (.parse dt-format (:created_at %))) results))))
+(defn- twitter-search-query
+  [path]
+  (read-json (reader (str "http://search.twitter.com/search.json" path))))
+
+(defn- twitter-term-query
+  [term]
+  (twitter-search-query (str "?q=" term "&rpp=100")))
+
+(defn- twitter-continue-query
+  [json-result]
+  (if-let [next-url (:next_page json-result)]
+    (twitter-search-query next-url)
+    {:results []}))
+
+(defn- timed-query-results
+  [json-result]
+  (set map #(.getTime (.parse dt-format (:created_at %))) (:results json-result)))
 
 (defn- update-keyword
-  [keyword]
-  (let [recent-hits (query-recent-hits (:word keyword))
-        combined-hits (union recent-hits (:hits keyword))]
+  [keyword result]
+  (let [recent-hits (timed-query-results result)
+	combined-hits (union recent-hits (:hits keyword))]
+
+    ; todo move the send-off higher up?
+    ; could have :continue in assoc keyword below. later keywords-refresh
+    ; runs through keywords after refresh, following any :continue until no more.
+    (when-let [next-url (:next_page result)]
+      (let [update-fn #(update-keyword % (twitter-continue-query % result))]
+	(send-off *keywords* #(update-in % [(:word keyword)] update-fn))))
+    
     (assoc keyword
       :last-hit-id (first (sort recent-hits))
       :hits (expire-old-hits combined-hits)
       :cached-rating (rate-hits combined-hits))))
+
+(defn- update-keyword-new-query
+  [keyword]
+  (update-keyword keyword (twitter-search-query (:word keyword))))
 
 (defn keywords-add
   [word]
@@ -61,22 +80,16 @@
     (if (not (contains? @*keywords* word))
       (do
 	(send *keywords* assoc word keyword)
-	(send-off *keywords* #(assoc % word (update-keyword keyword)))))))
-
-(defn keywords-wait-for-add
-  []
-  (await *keywords*))
+	(send-off *keywords* #(update-in % [word] update-keyword-new-query))))))
 
 (defn keywords-rating
   "Returns the current rating of a keyword."
   [word]
   (:cached-rating (@*keywords* word)))
 
-; todo broken
 (defn keywords-refresh-one
   [word]
-  (let [update-fn #(assoc % word (update-keyword (get-in % word)))]
-    (send-off *keywords* update-fn)))
+  (send-off *keywords* #(update-in % [word] update-keyword-new-query)))
 
 (defn keywords-refresh
   "Refreshes all keywords by retreiving recent hits from
@@ -84,8 +97,7 @@
    id."
   []
   (doseq [k (keys @*keywords*)]
-    (let [update-fn #(assoc % k (update-keyword (get-in % k)))]
-      (send-off *keywords* update-fn))))
+    (send-off *keywords* #(update-in % [k] update-keyword-new-query))))
 
 (defn keywords-refresh-pmap
   []
